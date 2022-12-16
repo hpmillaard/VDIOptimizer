@@ -1,0 +1,1126 @@
+<html><head><title>VDI Optimizer</title>
+<HTA:APPLICATION VERSION="2.0.17" ID="HTA" APPLICATIONNAME="VDI Optimizer" SINGLEINSTANCE="yes" BORDER="thin" BORDERSTYLE="normal" ICON="explorer.exe" CONTEXTMENU="no">
+</head>
+
+<script language="VBScript">
+'+--------------------------------------------------------------------------------------+
+'| Auteur: Harm Peter Millaard (Axians)							|
+'+--------------------------------------------------------------------------------------+
+Const HKLM = &H80000002
+intMinutes = 1
+intSeconds = 0
+DebugLog = True
+
+Dim WSH : Set WSH = CreateObject("WScript.Shell") 
+Dim WshNet : Set WshNet = CreateObject("WScript.Network")
+Dim FSO : Set FSO = CreateObject("Scripting.FileSystemObject")
+Dim oReg : Set oReg = GetObject("winmgmts:{impersonationLevel=impersonate}!\\.\root\default:StdRegProv")
+If DebugLog Then Log("Started")
+
+strWinDir = WSH.ExpandEnvironmentStrings("%WINDIR%")
+strProgFiles = WSH.ExpandEnvironmentStrings("%PROGRAMFILES%")
+strProgFilesX86 = WSH.ExpandEnvironmentStrings("%PROGRAMFILES(x86)%")
+strProgData = WSH.ExpandEnvironmentStrings("%ProgramData%")
+
+strVer = GetObject("winmgmts:\\.\root\cimv2:Win32_Processor='cpu0'").AddressWidth
+For Each objItem in GetObject("winmgmts:{impersonationLevel=impersonate}!\\.\root\cimv2").InstancesOf("Win32_OperatingSystem")
+	If objItem.ProductType = 1 Then IsServer = False
+	If objItem.ProductType = 2 Or objItem.ProductType = 3 Then IsServer = True
+	If DebugLog and IsServer Then Log("Computer is a Server OS") Else Log("Computer is a Client OS") 
+	Winver = Left(objItem.Version,3)
+	If DebugLog Then Log("OS Version: " & objItem.Version)
+	Caption = objItem.Caption
+	If DebugLof Then Log("OS Version: " & Caption)
+Next
+
+For Each objItem in GetObject("winmgmts:{impersonationLevel=impersonate}!\\.\root\cimv2").InstancesOf("Win32_ComputerSystem")
+	If objItem.Manufacturer = "Microsoft Corporation" AND objItem.Model = "Virtual Machine" Then Hypervisor = "Hyper-V" : If DebugLog Then Log("Hypervisor Hyper-v found")
+	If LCASE(Left(objItem.Model,6)) = "vmware" Then Hypervisor = "VMware" : If DebugLog Then Log("Hypervisor VMware found")
+Next
+
+Sub Window_Onload
+	'window.resizeto 2000,600
+	AppName.InnerHTML = HTA.ApplicationName
+	AppVer.InnerHTML = HTA.Version
+	OSCaption.InnerHTML = WSHNet.Computername & ": " & Caption & "&nbsp;" & Hypervisor
+	idTimer = window.setInterval("CountDown", 1000)
+	If DebugLog Then Log("Application Screen created, Started Countdown")
+End Sub
+
+Sub Check(Value)
+	For Each Element In Document.GetElementsByTagName("input")
+		If Element.Type = "checkbox" Then Element.checked = Value
+	Next
+	Document.getElementById("checkStart").Checked=False
+End Sub
+
+Sub Optimize
+window.moveto -2000,-2000
+Log("Optimization Started")
+
+If FSO.FileExists(strWinDir & "\Microsoft.NET\Framework\v4.0.30319\ngen.exe") Then Run(strWinDir & "\Microsoft.NET\Framework\v4.0.30319\ngen.exe executequeueditems") : If DebugLog Then Log("Compile .Net x86")
+If FSO.FileExists(strWinDir & "\Microsoft.NET\Framework64\v4.0.30319\ngen.exe") Then Run(strWinDir & "\Microsoft.NET\Framework64\v4.0.30319\ngen.exe executequeueditems") : If DebugLog Then Log("Compile .Net x64")
+
+'+---------------------------------------------------------------------------------+
+'| Optimize Default User Settings (row 1)                                          |
+'+---------------------------------------------------------------------------------+
+Log("Default User Settings (row 1)")
+
+WSH.Run "reg load HKEY_USERS\Temp ""%SystemDrive%\Users\Default\NTUSER.DAT""",0,true
+If DebugLog Then Log("Default User Registry Loaded")
+
+If DebugLog Then Log("No App Startup Delay")
+WSH.RegWrite "HKEY_USERS\Temp\Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize\StartupDelayInMSec","0","REG_DWORD"
+
+If Default_Screensaver.checked 		Then WSH.RegWrite "HKEY_USERS\Temp\Software\Policies\Microsoft\Windows\Control Panel\Desktop\SCRNSAVE.EXE","%windir%\system32\scrnsave.scr" : If DebugLog Then Log("Default Screensaver")
+
+If Secure_Screensaver.checked 		Then WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop\ScreenSaverIsSecure","1" : If DebugLog Then Log("Secure Screensaver")
+
+If Screensaver_Timeout.checked 		Then WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop\ScreenSaveTimeOut",ScreensaverTimeOut.Value : If DebugLog Then Log("Screensaver Timeout")
+
+If LogonScreenSaver.checked		Then WSH.RegWrite "HKEY_USERS\.DEFAULT\Control Panel\Desktop\ScreenSaveActive","0" : If DebugLog Then Log("Disable Logon Screensaver")
+
+If Default_WallPaper.checked 		Then WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Wallpaper"," " : If DebugLog Then Log("Default WallPaper")
+
+If IECache_Non_Persistent.checked 	Then WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Cache\Persistent","0","REG_DWORD" : If DebugLog Then Log("IE Cache non persistent")
+
+If Disable_RSS_Feeds.checked 		Then
+	If DebugLog Then Log("Disable RSS Feeds")
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Feeds\SyncStatus","0","REG_DWORD"
+	Run("msfeedssync disable")
+End If
+
+If IE_OffScreen_Composisiton.checked	Then WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Internet Explorer\Main\Force Offscreen Composition","1","REG_DWORD" : If DebugLog Then Log("Force Offscreen Composition for Internet Explorer")
+
+If Visual.checked Then
+	If DebugLog Then Log("Disable all Visual Effects except ""Use common tasks in folders"" and ""Use visual styles on windows and buttons""")
+	WSH.RegWrite "HKEY_USERS\Temp\Control Panel\Desktop\AutoEndTasks","1"
+	WSH.RegWrite "HKEY_USERS\Temp\Control Panel\Desktop\CursorBlinkRate","-1"
+	WSH.RegWrite "HKEY_USERS\Temp\Control Panel\Desktop\DisableCursorBlink","1"
+	WSH.RegWrite "HKEY_USERS\Temp\Control Panel\Desktop\DragFullWindows","0"
+	WSH.RegWrite "HKEY_USERS\Temp\Control Panel\Desktop\FontSmoothing","0"
+	WSH.RegWrite "HKEY_USERS\Temp\Control Panel\Desktop\MenuShowDelay","0"
+	Run("reg add ""HKEY_USERS\Temp\Control Panel\Desktop"" /v UserPreferencesMask /d 9012038010000000 /t REG_BINARY /f")
+	WSH.RegWrite "HKEY_USERS\Temp\Control Panel\Desktop\WaittoKillAppTimeout","20000"
+	WSH.RegWrite "HKEY_USERS\Temp\Control Panel\Desktop\WindowMetrics\MinAnimate","0"
+
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects\VisualFXSetting","3","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\EnableAutoTray","0","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ShowDriveLettersFirst","4","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\Hidden","1","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\HideFileExt","0","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\ListviewAlphaSelect","0","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\ListviewScrollOver","0","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\ListviewShadow","0","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\ListviewWatermark","0","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\NavPaneExpandToCurrentFolder","1","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\NavPaneShowAllFolders","1","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\NavPaneShowFavorites","0","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\SharingWizardOn","0","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarAnimations","0","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarGlomLevel","0","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarSmallIcons","1","REG_DWORD"
+
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\DWM\EnableAeroPeek","0","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\DWM\AlwaysHibernateThumbnails","0","REG_DWORD"
+End If
+
+If Sounds.checked			Then
+	If DebugLog Then Log("Disable Windows Logon/Logoff Sounds")
+	WSH.RegDelete "HKEY_USERS\Temp\AppEvents\Schemes\Apps\.Default\WindowsLogoff\.Current\"
+	WSH.RegWrite "HKEY_USERS\Temp\AppEvents\Schemes\Apps\.Default\WindowsLogoff\.Current\1",""
+	WSH.RegDelete "HKEY_USERS\Temp\AppEvents\Schemes\Apps\.Default\WindowsLogoff\.Current\1"
+
+	WSH.RegDelete "HKEY_USERS\Temp\AppEvents\Schemes\Apps\.Default\WindowsLogon\.Current\"
+	WSH.RegWrite "HKEY_USERS\Temp\AppEvents\Schemes\Apps\.Default\WindowsLogon\.Current\1",""
+	WSH.RegDelete "HKEY_USERS\Temp\AppEvents\Schemes\Apps\.Default\WindowsLogon\.Current\1"
+End If
+
+On Error Resume Next
+If Desktop_UserProfile.checked		Then
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel\{59031A47-3F72-44A7-89C5-5595FE6B30EE}","0","REG_DWORD" : If DebugLog Then Log("Show desktop icon")
+Else
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel\{59031A47-3F72-44A7-89C5-5595FE6B30EE}","1","REG_DWORD" : If DebugLog Then Log("Hide desktop icon")
+End If
+
+If Desktop_Computer.checked		Then
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel\{20D04FE0-3AEA-1069-A2D8-08002B30309D}","0","REG_DWORD" : If DebugLog Then Log("Show computer icon")
+Else
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel\{20D04FE0-3AEA-1069-A2D8-08002B30309D}","1","REG_DWORD" : If DebugLog Then Log("Hide computer icon")
+End If
+
+If Desktop_Network.checked		Then
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel\{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}","0","REG_DWORD" : If DebugLog Then Log("Show Network icon")
+Else
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel\{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}","1","REG_DWORD" : If DebugLog Then Log("Hide Network icon")
+End If
+
+If Desktop_ControlPanel.checked		Then
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel\{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}","0","REG_DWORD" : If DebugLog Then Log("Show Control Panel icon")
+Else
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel\{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}","1","REG_DWORD" : If DebugLog Then Log("Hide Control Panel icon")
+End If
+
+If Desktop_RecycleBin.checked		Then
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel\{645FF040-5081-101B-9F08-00AA002F954E}","0","REG_DWORD" : If DebugLog Then Log("Show Recycle icon")
+Else
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel\{645FF040-5081-101B-9F08-00AA002F954E}","1","REG_DWORD" : If DebugLog Then Log("Hide Recycle icon")
+End If
+On Error Goto 0
+
+If ActionCenter.checked			Then
+	If DebugLog Then Log("Disable Action Center")
+	WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\HideSCAHealth","1","REG_DWORD"
+	If Winver >= "10." Then WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Policies\Microsoft\Windows\Explorer\DisableNotificationCenter","1","REG_DWORD"
+End If
+
+If ThisPC.checked AND Winver >= 6.4	Then WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\LaunchTo","1","REG_DWORD" : If DebugLog Then Log("Change explorer default view to This PC instead of Quick Access")
+
+If Autoplay.checked			Then WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers\DisableAutoplay","1","REG_DWORD" : If DebugLog Then Log("Disable AutoPlay for all devices")
+
+If StartMost.checked AND Winver >= 6.4 Then WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\Start_TrackProgs","0","REG_DWORD" : If DebugLog Then Log("Disable show most used apps at start menu")
+
+If StartRecent.checked AND Winver >= 6.4 Then WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\Start_TrackDocs","0","REG_DWORD" : If DebugLog Then Log("Disable show recent items at start menu")
+
+If Bing.checked				Then WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Search\BingSearchEnabled","0","REG_DWORD" : If DebugLog Then Log("Disable Bing Search")
+
+If SearchTaskbar.checked AND Winver >= 6.4 Then WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Search\SearchboxTaskbarMode","0","REG_DWORD" : If DebugLog Then Log("Disable Search on taskbar")
+
+If Transparency.checked AND Winver >= 6.4 Then WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize\EnableTransparency","0","REG_DWORD" : If DebugLog Then Log("Disable Transparency effects")
+
+If OneDrive.checked			Then Run("reg add HKEY_USERS\Temp\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run /v OneDrive /d 0300000064A102EF4C3ED101 /t REG_BINARY /f") : If DebugLog Then Log("Disable OneDrive")
+
+If PrivacyUser.checked AND Winver >= 6.4 Then
+	If DebugLog Then Log("Disable per use Privacy Settings")
+	If DebugLog Then Log("Let websites provide locally relevant content by accessing my language list")
+	WSH.RegWrite "HKEY_USERS\Temp\Control Panel\International\User Profile\HttpAcceptLanguageOptOut","1","REG_DWORD"
+
+	If DebugLog Then Log("Handwriting personalization - Turn off automatic learning")
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Personalization\Settings\AcceptedPrivacyPolicy","0","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\InputPersonalization\TrainedDataStore\HarvestContacts","0","REG_DWORD"
+
+	If DebugLog Then Log("Turn off cloud sync your settings")
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Messaging\CloudServiceSyncEnabled","0","REG_DWORD"
+
+	If DebugLog Then Log("Feedback and diagnostics")
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Siuf\Rules\PeriodInNanoSeconds","0","REG_DWORD"
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Siuf\Rules\NumberOfSIUFInPeriod","0","REG_DWORD"
+
+	If DebugLog Then Log("Send Typing info to Microsoft")
+	WSH.RegWrite "HKEY_USERS\Temp\SOFTWARE\Microsoft\Input\TIPC\Enabled","0","REG_DWORD"
+End If
+
+If DebugLog Then Log("Unload default user registry")
+WSH.Run "reg unload HKEY_USERS\Temp",0,true
+
+'+---------------------------------------------------------------------------------+
+'| Optimize Default System Settings (row 2)                                        |
+'+---------------------------------------------------------------------------------+
+Log("Default System Settings (row 2)")
+
+If SkipRearm.checked 			Then Run("reg add ""HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform"" /v SkipRearm /d 1 /t REG_DWORD /f") : If DebugLog Then Log("Allow Windows Rearm over 3 times")
+
+If IEFirstRun.checked			Then WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Internet Explorer\Main\DisableFirstRunCustomize","1","REG_DWORD" : If DebugLog Then Log("Disable IE Wizard")
+
+If IECache.checked			Then
+	If DebugLog Then Log("Reduce IE Temporary File Cache")
+	Run("reg add ""HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Cache\Paths"" /v Paths /d 04000000 /t REG_BINARY /f")
+	Run("reg add ""HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Cache\Paths\path1"" /v CacheLimit /d 256 /t REG_DWORD /f")
+	Run("reg add ""HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Cache\Paths\path2"" /v CacheLimit /d 256 /t REG_DWORD /f")
+	Run("reg add ""HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Cache\Paths\path3"" /v CacheLimit /d 256 /t REG_DWORD /f")
+	Run("reg add ""HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Cache\Paths\path4"" /v CacheLimit /d 256 /t REG_DWORD /f")
+	If strVer = 64 Then
+		Run("reg add ""HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Internet Settings\Cache\Paths"" /v Paths /d 04000000 /t REG_BINARY /f")
+		Run("reg add ""HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Internet Settings\Cache\Paths\path1"" /v CacheLimit /d 256 /t REG_DWORD /f")
+		Run("reg add ""HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Internet Settings\Cache\Paths\path2"" /v CacheLimit /d 256 /t REG_DWORD /f")
+		Run("reg add ""HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Internet Settings\Cache\Paths\path3"" /v CacheLimit /d 256 /t REG_DWORD /f")
+		Run("reg add ""HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Internet Settings\Cache\Paths\path4"" /v CacheLimit /d 256 /t REG_DWORD /f")
+	End If
+End If
+
+If RDP.checked				Then
+	If DebugLog Then Log("Configure RDP")
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\fDenyTSConnections","0","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp\UserAuthentication","0","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp\SecurityLayer","0","REG_DWORD"
+	Run("reg add ""HKLM\SOFTWARE\Microsoft\Terminal Server Client"" /v ""Min Send Interval"" /d 10 /t REG_DWORD /f")
+End If
+
+If AU.checked				Then
+	If DebugLog Then Log("Disable Automatic Update - important for non persistent VMs")
+	WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU\AUOptions","1","REG_DWORD"
+	WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU\NoAutoUpdate","1","REG_DWORD"
+	Run("reg add ""HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update"" /v UpdatesAvailableForDownloadLogon /d 0 /t REG_DWORD /f")
+	Run("reg add ""HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update"" /v UpdatesAvailableForInstallLogon /d 0 /t REG_DWORD /f")
+	Run("reg add ""HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update"" /v UpdatesAvailableWithUiLogon /d 0 /t REG_DWORD /f")
+	Run("reg add ""HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update"" /v UpdatesAvailableWithUiOrEulaLogon /d 0 /t REG_DWORD /f")
+	Run("sc config wuauserv start= disabled")
+End If
+
+If SR.checked		Then
+	If DebugLog Then Log("Disable System Restore")
+	WSH.Run "Powershell Disable-ComputerRestore -drive c:\",0,true
+	WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore\DisableSR","1","REG_DWORD"
+	Run("sc config SR start= disabled")
+	Run("sc config srservice start= disabled")
+	On Error Resume Next
+	GetObject("winmgmts:{impersonationLevel=impersonate}!\\.\root\default:SystemRestore").Disable("")
+	On Error Goto 0
+End If
+
+If DiskTimeOut.checked			Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\Disk\TimeOutValue","200","REG_DWORD" : If DebugLog Then Log("Disk Timeout Value")
+
+If SuperFetch.checked			Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters\EnableSuperfetch","0","REG_DWORD" : If DebugLog Then Log("Set Superfetch to boot files only")
+
+If RecycleBin.checked			Then
+	If DebugLog Then Log("Disable Storing Recycle Bin Files")
+	WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\policies\Explorer\NoRecycleFiles","1","REG_DWORD"
+	Run("reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\BitBucket /v UseGlobalSettings /d 1 /t REG_DWORD /f")
+	Run("reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\BitBucket /v NukeOnDelete /d 1 /t REG_DWORD /f")
+End If
+
+If Offload.checked			Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\BNNS\Parameters\EnableOffload","0","REG_DWORD" : If DebugLog Then Log("Large Send Offload")
+
+If IPv6.checked				Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\TcpIp6\Parameters\DisabledComponents","255","REG_DWORD" : If DebugLog Then Log("Disable IPv6 (KB929852)")
+
+If ClearPageFile.checked		Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\ClearPageFileAtShutdown","0","REG_DWORD" : If DebugLog Then Log("Disable Pagefile Clear at Shutdown")
+
+If OfflineFiles.checked			Then
+	If DebugLog Then Log("Disable Offline Files")
+	Run("sc config CscService start= disabled")
+	Run("sc config CSC start= disabled")
+	Run("reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\NetCache /v Enabled /d 0 /t REG_DWORD /f")
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\CSC\Parameters\FormatDatabase","1","REG_DWORD"
+End If
+
+If BackgroundDefrag.checked		Then Run("reg add HKLM\SOFTWARE\Microsoft\Dfrg\BootOptimizeFunction /v Enable /d N /f") : If DebugLog Then Log("Disable Background Defragmentation")
+
+If BackgroundLS.checked			Then Run("reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OptimalLayout /v EnableAutoLayout /d 0 /t REG_DWORD /f") : If DebugLog Then Log("Disable Background Layout Service")
+
+If SpoolerWarningEvents.checked		Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Print\Providers\EventLog","1","REG_DWORD" : If DebugLog Then Log("Disable Spooler Warning Events")
+
+If NewNetwork.checked			Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Network\NewNetworkWindowOff\","" : If DebugLog Then Log("Disable New Network dialog")
+
+If NewDriversFromWU.checked		Then WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\DriverSearching\searchorderConfig","0","REG_DWORD" : If DebugLog Then Log("Disable AutoUpdate of drivers from WU")
+
+If OptimizeCPU.checked			Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\PriorityControl\Win32PrioritySeparation","38","REG_DWORD" : If DebugLog Then Log("Optimize processor Resource Scheduling to Applications (38) or background services (24)")
+
+If BackgroundImage.checked AND Winver >= 6.4 Then Run("reg add HKLM\SOFTWARE\Policies\Microsoft\Windows\System /v DisableLogonBackgroundImage /d 1 /t REG_DWORD /f") : If DebugLog Then Log("Disable Logon Background Image")
+
+If CEIP.checked				Then Run("reg add HKLM\SOFTWARE\Microsoft\SQMClient\Windows /v CEIPEnable /d 0 /t REG_DWORD /f") : If DebugLog Then Log("Disable Customer Experience Improvement Program")
+
+If Cortana.checked AND Winver >= 6.4	Then WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search\AllowCortana","0","REG_DWORD" : If DebugLog Then Log("Disable Cortana")
+
+If LocationBasedSearch.checked		Then WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search\AllowSearchToUseLocation","0","REG_DWORD" : If DebugLog Then Log("Disable location based info in search")
+
+If SearchWeb.checked			Then
+	If DebugLog Then Log("Disable Search Web")
+	WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search\DisableWebSearch","0","REG_DWORD"
+	If Winver >= 6.2 Then WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search\ConnectedSearchUseWeb","0","REG_DWORD"
+End If
+
+If WindowsStore.checked AND Winver >= 6.2 Then
+	If DebugLog Then Log("Disable Windows Store")
+	WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\WindowsStore\RemoveWindowsStore","1","REG_DWORD"
+	On Error Resume Next
+	FSO.DeleteFile strProgData & "\Microsoft\Windows\Start Menu\Programs\Windows Store.lnk", True
+	On Error Goto 0
+End If
+
+If Privacy.checked AND Winver >= 6.4 Then
+	If DebugLog Then Log("Turn off the advertising ID")
+	WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo\DisabledByGroupPolicy","1","REG_DWORD"
+	Run("reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo /v Enabled /d 0 /t REG_DWORD /f")
+
+	If DebugLog Then Log("Allow Windows to automatically connect to suggested open hotspots, to networks shared by contacts, and to hotspots offering paid services")
+	Run("reg add HKLM\SOFTWARE\Microsoft\WcmSvc\wifinetworkmanager\config /v AutoConnectAllowedOEM /d 0 /t REG_DWORD /f")
+
+	If DebugLog Then Log("Allow automatically update of Speech Data")
+	Run("reg add HKLM\SOFTWARE\Microsoft\Speech_OneCore\Preferences /v ModelDownloadAllowed /d 0 /t REG_DWORD /f")
+End If
+
+If FirstLogonAnimation.checked AND Winver >= 6.2 Then WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableFirstLogonAnimation","0","REG_DWORD" : If DebugLog Then Log("Disable First Logon Animation")
+
+'+---------------------------------------------------------------------------------+
+'| Optimize Default System Settings (Row 3)                                        |
+'+---------------------------------------------------------------------------------+
+Log("Default System Settings (row 3)")
+
+If UACSecurePrompt.checked		Then WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\PromptOnSecureDesktop","0","REG_DWORD" : If DebugLog Then Log("Disable UAC secure desktop prompt")
+
+If WindowsSideShow.checked		Then WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\Sideshow\Disabled","1","REG_DWORD" : If DebugLog Then Log("Disable Windows Sideshow")
+
+If PCPWChange.checked			Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters\DisablePasswordChange","1","REG_DWORD" : If DebugLog Then Log("Prevent Computer password change")
+
+If ServiceStartTimeout.checked		Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\ServicesPipeTimeout","180000","REG_DWORD" : If DebugLog Then Log("Increase Service Startup Timeout")
+
+If ErrorMode.checked			Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Windows\ErrorMode","2","REG_DWORD" : If DebugLog Then Log("Hide Hard Error Messages")
+
+If Backupmon.checked			Then WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsBackup\DisableMonitoring","0","REG_DWORD" : If DebugLog Then Log("Disable Backup Monitoring")
+
+If CIFSOptimize.checked			Then
+	If DebugLog Then Log("CIFS/SMB optimizations")
+	WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\NoRemoteChangeNotify","1","REG_DWORD"
+	WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\NoRecentDocsNetHood","1","REG_DWORD"
+	WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\NoRemoteRecursiveEvents","1","REG_DWORD"
+	WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\NoDetailsThumbnailOnNetwork","1","REG_DWORD"
+	WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\StartRunNoHOMEPATH","1","REG_DWORD"
+	WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\UseDesktopIniCache","1","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\MRxSmb\Parameters\InfoCacheLevel","0","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\MRxSmb\Parameters\MultiUserEnabled","1","REG_DWORD"
+End If
+
+If DelayedDesktopTimeout.checked	Then WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\DelayedDesktopSwitchTimeout","5","REG_DWORD" : If DebugLog Then Log("Delayed Desktop Switch Timeout")
+
+If BugCheckMemDump.checked		Then
+	If DebugLog Then Log("Disable Bug Check Memory Dump, but do not reboot automatically")
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\CrashControl\AutoReboot","0","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\CrashControl\CrashDumpEnabled","0","REG_DWORD"
+	On Error Resume Next
+	WSH.RegDelete "HKLM\SYSTEM\CurrentControlSet\Control\CrashControl\DedicatedDumpFile"
+	On Error Goto 0
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\CrashControl\DumpFileSize","2","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\CrashControl\LogEvent","1","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\CrashControl\IgnorePagefileSize","1","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\CrashControl\NMICrashDump","1","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\CrashControl\Overwrite","1","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\CrashControl\SendAlert","0","REG_DWORD"
+End If
+
+If Eventlog.checked			Then
+	If DebugLog Then Log("Limit Eventlog Size")
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\Eventlog\Application\MaxSize","65536","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\Eventlog\Application\Retention","0","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\Eventlog\Security\MaxSize","65536","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\Eventlog\Security\Retention","0","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\Eventlog\System\MaxSize","65536","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\Eventlog\System\Retention","0","REG_DWORD"
+	On Error Resume Next
+	For Each e in GetObject("winmgmts:{impersonationLevel=impersonate,(Security)}!\\.\root\cimv2").InstancesOf("Win32_NTEventLogFile")
+		e.MaxFileSize = 1052672
+		e.OverWritePolicy = "WhenNeeded"
+		e.OverWriteOutdated = 0
+		e.Put_
+		e.ClearEventLog()
+	Next
+	On Error Goto 0
+End If
+
+If Workstation.checked			Then
+	If DebugLog Then Log("Optimize Workstation Service")
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\services\LanmanWorkstation\Parameters\DirectoryCacheEntriesMax","1000","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\services\LanmanWorkstation\Parameters\DisableBandwidthThrottling","1","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\services\LanmanWorkstation\Parameters\DisableLargeMtu","0","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\services\LanmanWorkstation\Parameters\FileInfoCacheEntriesMax","8000","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\services\LanmanWorkstation\Parameters\FileNotFoundCacheEntriesMax","8000","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\services\LanmanWorkstation\Parameters\MaxCmds","2048","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\services\LanmanWorkstation\Parameters\MaxThreads","11","REG_DWORD"
+End If
+
+If Server.checked			Then
+	If DebugLog Then Log("Optimize Server Service")
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\services\LanmanServer\Parameters\MaxWorkItems","8192","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\services\LanmanServer\Parameters\MaxMpxCt","2048","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\services\LanmanServer\Parameters\MaxRawWorkItems","512","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\services\LanmanServer\Parameters\MaxFreeConnections","100","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\services\LanmanServer\Parameters\MinFreeConnections","32","REG_DWORD"
+End If
+
+If IPv4.checked				Then
+	If DebugLog Then Log("Optimize IPv4")
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\TCPIP\Parameters\DisableTaskOffload","1","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\TCPIP\Parameters\EnableRSS","0","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\TCPIP\Parameters\EnableTCPA","0","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\TCPIP\Parameters\EnableTCPChimney","0","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\TCPIP\Parameters\EnableWsd","0","REG_DWORD"
+End If
+
+If IESC.checked	AND IsServer Then
+	If DebugLog Then Log("Disable Internet Enhanced Security")
+	WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{A509B1A7-37EF-4b3f-8CFC-4F3A74704073}\IsInstalled","0","REG_DWORD"
+	WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{A509B1A8-37EF-4b3f-8CFC-4F3A74704073}\IsInstalled","0","REG_DWORD"
+	WSH.Run "Rundll32 iesetup.dll, IEHardenLMSettings",0,true
+	WSH.Run "Rundll32 iesetup.dll, IEHardenUser",0,true
+	WSH.Run "Rundll32 iesetup.dll, IEHardenAdmin",0,true
+End If
+
+If PagingExecutive.checked		Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\DisablePagingExecutive","1","REG_DWORD" : If DebugLog Then Log("In order to increase performance, kernel mode drivers and other system components can be configured to that they are not paged to disk. However, there must be enough memory available to hold these items or else the system will experience performance and stability issues.")
+
+If GPODebug.checked			Then
+	If DebugLog Then Log("Enable Group Policy Debug Logging to %windir%\debug\UserMode\gpsvc.log")
+	If Winver <= 5.2 Then Run("reg add ""HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"" /v UserEnvDebugLevel /d 196610 /t REG_DWORD /f")
+	If Winver >= 6.0 Then Run("reg add ""HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Diagnostics"" /v GPSvcDebugLevel /d 196610 /t REG_DWORD /f")
+End If
+
+If NoLockScreen.checked AND Winver >= 6.2 Then WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\Personalization\NoLockScreen","1","REG_DWORD" : If DebugLog Then Log("Disable Lock Screen")
+
+If NotificationCenter.checked AND Winver >= 6.4 Then Run("reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\ImmersiveShell /v UseActionCenterExperience /d 0 /t REG_DWORD /f") : If DebugLog Then Log("Disable Notification Center")
+
+If PreviousVersions.checked		Then Run("reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer /v NoPreviousVersionsPage /d 1 /t REG_DWORD /f") : If DebugLog Then Log("Disable Previous Versions")
+
+If SyncSettings.checked AND Winver >= 6.4 Then WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\SettingSync\DisableSettingSync","2","REG_DWORD" : If DebugLog Then Log("Disable Sync Settings to the Cloud")
+
+If SyncFiles.checked AND Winver >= 6.4	Then WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\SettingSync\DisableSettingSyncUserOverride","1","REG_DWORD" : If DebugLog Then Log("Disable Sync Files to the Cloud")
+
+If SyncOneDrive.checked AND Winver >= 6.4 Then WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\OneDrive\DisableFileSyncNGSC","1","REG_DWORD" : If DebugLog Then Log("Disable Sync to OneDrive")
+
+If UploadWU.checked AND Winver >= 6.4	Then Run("reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Config /v DODownloadMode /d 0 /t REG_DWORD /f") : If DebugLog Then Log("Disable Windows Updates Upload P2P")
+
+If Telemetry.checked AND Winver >= 6.4	Then WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection\AllowTelemetry","0","REG_DWORD" : If DebugLog Then Log("Disable Telemetry Collection")
+
+If NTFS83names.checked			Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\NtfsDisable8dot3NameCreation","1","REG_DWORD" : If DebugLog Then Log("Disable NTFS 8.3 short name creation (https://support.citrix.com/article/CTX131796)")
+
+If OneDriveSystem.checked		Then WSH.RegWrite "HKLM\SOFTWARE\Microsoft\OneDrive\AllUsersInstall","1","REG_DWORD" : If DebugLog Then Log("OneDrive per machine")
+
+If VerboseStatus.checked		Then WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\VerboseStatus","1","REG_DWORD" : If DebugLog Then Log("Show Verbose Status messages at startup and logon")
+
+If RemoveUserFirewallRules.checked AND Winver >= "10." Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\ScharedAccess\Parameters\FirewallPolicy\DeleteUserAppContainersOnLogoff","1","REG_DWORD" : If DebugLog Then Log("Remove per user Firewall rules at Logoff")
+
+'+---------------------------------------------------------------------------------+
+'| Services (row 4)                                                                |
+'+---------------------------------------------------------------------------------+
+Log("Services (row 4)")
+
+If AxInstSV.checked			Then Run("sc config AxInstSV start= disabled") : If DebugLog Then Log("Disable Service ActiveX Installer")
+
+If AJRouter.checked			Then Run("sc config AJRouter start= disabled") : If DebugLog Then Log("Disable Service AllJoyn Router Service")
+
+If AeLookupSvc.checked			Then Run("sc config AeLookupSvc start= disabled") : If DebugLog Then Log("Disable Service Application Experience")
+
+If ALG.checked				Then Run("sc config ALG start= disabled") : If DebugLog Then Log("Disable Service Application Layer Gateway")
+
+If AppMgmt.checked			Then Run("sc config AppMgmt start= disabled") : If DebugLog Then Log("Disable Service Application Management")
+
+If AppReadiness.checked			Then Run("sc config AppReadiness start= disabled") : If DebugLog Then Log("Disable Service App Readiness")
+
+If BDESVC.checked			Then Run("sc config BDESVC start= disabled") : If DebugLog Then Log("Disable Service Bitlocker Drive Encryption")
+
+If Beep.checked				Then Run("sc config Beep start= disabled") : If DebugLog Then Log("Disable Service Windows Sounds")
+
+If BFE.checked				Then Run("sc config BFE start= disabled") : If DebugLog Then Log("Disable Service Base Filtering Engine")
+
+If BITS.checked				Then Run("sc config BITS start= disabled") : If DebugLog Then Log("Disable Service Background Intelligent Transfer")
+
+If Browser.checked			Then Run("sc config browser start= disabled") : If DebugLog Then Log("Disable Service Computer Browser")
+
+If BTAGService.checked			Then Run("sc config BTAGService start= disabled") : If DebugLog Then Log("Disable Service Bluetooth Audio Service")
+
+If bthserv.checked			Then Run("sc config bthserv start= disabled") : If DebugLog Then Log("Disable Service Bluetooth Support")
+
+If cisvc.checked			Then Run("sc config cisvc start= disabled") : If DebugLog Then Log("Disable Service Indexing")
+
+If Defragsvc.checked			Then Run("sc config Defragsvc start= disabled") : If DebugLog Then Log("Disable Service Disk Defragmenter")
+
+If DeviceAssociationService.checked	Then Run("sc config DeviceAssociationService start= disabled") : If DebugLog Then Log("Disable Service Device Association")
+
+If Diagtrack.checked			Then Run("sc config DiagTrack start= disabled") : If DebugLog Then Log("Disable Service Diagnostics Tracking Service")
+
+On Error Resume Next
+If DPS.checked				Then
+	If DebugLog Then Log("Disable Service Diagnostic Policy Service")
+	Run("sc config DPS start= disabled")
+	Run("sc config WdiServiceHost start= disabled")
+	Run("sc config WdiSystemHost start= disabled")
+End If
+On Error Goto 0
+
+If DsmSvc.checked			Then Run("sc config DsmSvc start= disabled") : If DebugLog Then Log("Disable Service Device Setup Manager")
+
+If ehRecvr.checked			Then Run("sc config ehRecvr start= disabled") : If DebugLog Then Log("Disable Service Windows Media Center Receiver")
+
+If ehSched.checked			Then Run("sc config ehSched start= disabled") : If DebugLog Then Log("Disable Service Windows Media Center Scheduler")
+
+If EFS.checked				Then Run("sc config EFS start= disabled") : If DebugLog Then Log("Disable Service Encrypting File System")
+
+If Fax.checked				Then Run("sc config Fax start= disabled") : If DebugLog Then Log("Disable Service Fax")
+
+If fdPHost.checked			Then Run("sc config fdPHost start= disabled") : If DebugLog Then Log("Disable Service Function Discovery Provider Host")
+
+If FDResPub.checked			Then Run("sc config FDResPub start= disabled") : If DebugLog Then Log("Disable Service Function Discovery Resource Publication")
+
+If fhsvc.checked			Then Run("sc config fhsvc start= disabled") : If DebugLog Then Log("Disable Service File History Service")
+
+If HomeGroupListener.checked		Then Run("sc config HomeGroupListener start= disabled") : If DebugLog Then Log("Disable Service HomeGroup Listener")
+
+If HomeGroupProvider.checked		Then Run("sc config HomeGroupProvider start= disabled") : If DebugLog Then Log("Disable Service HomeGroupProvider")
+
+If icssvc.checked			Then Run("sc config icssvc start= disabled") : If DebugLog Then Log("Disable Service Windows Mobile Hotspot")
+
+'+---------------------------------------------------------------------------------+
+'| Services (row 5)                                                                |
+'+---------------------------------------------------------------------------------+
+Log("Services (row 5)")
+
+If iphlpsvc.checked			Then Run("sc config iphlpsvc start= disabled") : If DebugLog Then Log("Disable Service IP Helper")
+If iphlpsvc.checked			Then Run("sc config NcaSvc start= disabled")
+
+If lfsvc.checked			Then Run("sc config lfsvc start= disabled") : If DebugLog Then Log("Disable Service Geolocation Service")
+
+If MapsBroker.checked			Then Run("sc config MapsBroker start= disabled") : If DebugLog Then Log("Disable Service Download Maps Manager")
+
+If Mcx2Svc.checked			Then Run("sc config Mcx2Svc start= disabled") : If DebugLog Then Log("Disable Service Media Center Extender Service")
+
+If MSiSCSI.checked			Then Run("sc config MSiSCSI start= disabled") : If DebugLog Then Log("Disable Service Microsoft iSCSI Initiator Service")
+
+If NcbService.checked			Then Run("sc config NcbService start= disabled") : If DebugLog Then Log("Disable Service Network Connection Broker")
+
+If netprofm.checked			Then
+	If DebugLog Then Log("Disable Service Network List")
+	Run("sc config netprofm start= disabled")
+Else
+	If DebugLog Then Log("Autostart Service Network List")
+	Run("sc config netprofm start= auto")
+End If
+
+If NetTcpPortSharing.checked		Then Run("sc config NetTcpPortSharing start= disabled") : If DebugLog Then Log("Disable Service Net.Tcp Port Sharing")
+
+If PcaSvc.checked			Then Run("sc config PcaSvc start= disabled") : If DebugLog Then Log("Disable Service Program Compatability Assistant")
+
+If PeerDistSvc.checked			Then Run("sc config PeerDistSvc start= disabled") : If DebugLog Then Log("Disable Service BrachCache")
+
+If QWAVE.checked			Then Run("sc config QWAVE start= disabled") : If DebugLog Then Log("Disable Service Quality Windows Audio Video Experience")
+
+If RemoteAccess.checked			Then Run("sc config RemoteAccess start= disabled") : If DebugLog Then Log("Disable Service Routing and remote Access")
+
+If RetailDemo.checked			Then Run("sc config RetailDemo start= disabled") : If DebugLog Then Log("Disable Service Retail Demo")
+
+If ScDeviceEnum.checked			Then Run("sc config ScDeviceEnum start= disabled") : If DebugLog Then Log("Disable Service Smart Card Device Enumeration Service")
+
+If SDRSVC.checked			Then Run("sc config SDRSVC start= disabled") : If DebugLog Then Log("Disable Service Windows Backup")
+
+If SEMgrSvc.checked			Then Run("sc config SEMgrSvc start= disabled") : If DebugLog Then Log("Disable Service Payments and NFC/SE Manager")
+
+If SensorServices.checked		Then
+	Run("sc config SensorDataService start= disabled") : If DebugLog Then Log("Disable Service Sensor Data Service")
+	Run("sc config SensorService start= disabled") : If DebugLog Then Log("Disable Service Sensor Service")
+	Run("sc config SensrSvc start= disabled") : If DebugLog Then Log("Disable Service Sensor Monitoring, Adaptive Brightness")
+End If
+
+If SharedAccess.checked			Then Run("sc config SharedAccess start= disabled") : If DebugLog Then Log("Disable Service Internet Connection Sharing")
+
+If ShellHWDetection.checked		Then Run("sc config ShellHWDetection start= disabled") : If DebugLog Then Log("Disable Service Shell Hardware Detection")
+
+If shpamsvc.checked			Then Run("sc config shpamsvc start= disabled") : If DebugLog Then Log("Disable Service Shared PC Account Manager")
+
+If SNMPTRAP.checked			Then Run("sc config SNMPTRAP start= disabled") : If DebugLog Then Log("Disable Service SNMP trap")
+
+If SSDPSRV.checked			Then Run("sc config SSDPSRV start= disabled") : If DebugLog Then Log("Disable Service SSDP Discovery")
+
+If SstpSvc.checked			Then Run("sc config SstpSvc start= disabled") : If DebugLog Then Log("Disable Service Secure Socket Tunneling Protocol")
+
+If StorSvc.checked			Then Run("sc config StorSvc start= disabled") : If DebugLog Then Log("Disable Service Store Storage")
+
+If svsvc.checked			Then Run("sc config svsvc start= disabled") : If DebugLog Then Log("Disable Service Spot Verifier")
+
+If SysMain.checked			Then Run("sc config SysMain start= disabled") : If DebugLog Then Log("Disable Service Superfetch")
+
+If TabletInputService.checked		Then Run("sc config TabletInputService start= disabled") : If DebugLog Then Log("Disable Service Tablet Input")
+
+If TapiSrv.checked			Then Run("sc config TapiSrv start= disabled") : If DebugLog Then Log("Disable Service Telephony")
+
+If Themes.checked			Then Run("sc config Themes start= disabled") : If DebugLog Then Log("Disable Service Themes")
+
+'+---------------------------------------------------------------------------------+
+'| Services (row 6)                                                                |
+'+---------------------------------------------------------------------------------+
+Log("Services (row 6)")
+
+If TrkWks.checked			Then Run("sc config TrkWks start= disabled") : If DebugLog Then Log("Disable Service Distributed Link Tracking Client")
+
+If UI0Detect.checked			Then Run("sc config UI0Detect start= disabled") : If DebugLog Then Log("Disable Service Interactive Services Detection")
+
+If upnphost.checked			Then Run("sc config upnphost start= disabled") : If DebugLog Then Log("Disable Service Universal PnP Host")
+
+If VSS.checked				Then
+	If DebugLog Then Log("Disable Service Volume Shadow Copy")
+	Run("sc config VSS start= disabled")
+	Run("sc config swprv start= disabled")
+End If
+
+If wbengine.checked			Then Run("sc config wbengine start= disabled") : If DebugLog Then Log("Disable Service Block Level Backup Engine")
+
+If WbioSrvc.checked			Then Run("sc config WbioSrvc start= disabled") : If DebugLog Then Log("Disable Service Windows Biometric Service")
+
+If wcncsvc.checked			Then Run("sc config wcncsvc start= disabled") : If DebugLog Then Log("Disable Service Windows Connect Now")
+
+If WcsPlugInService.checked		Then Run("sc config WcsPlugInService start= disabled") : If DebugLog Then Log("Disable Service Windows Color System")
+
+If WebClient.checked			Then
+	If DebugLog Then Log("Disable Service WebClient")
+	Run("sc config WebClient start= disabled")
+Else
+	If DebugLog Then Log("Autostart Service WebClient")
+	Run("sc config WebClient start= auto")
+End If
+
+If wercplsupport.checked		Then Run("sc config wercplsupport start= disabled") : If DebugLog Then Log("Disable Service Problem Reports and Solutions Control Panel Support")
+
+If WerSvc.checked			Then
+	If DebugLog Then Log("Disable Service Windows Error Reporting")
+	Run("sc config WerSvc start= disabled")
+	Run("reg add ""HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting"" /v Disabled /t REG_DWORD /d 1 /f")
+	Run("cmd /c rd ""%ProgramData%\Microsoft\Windows\WER"" /s /q")
+End If
+
+If WiaRpc.checked			Then Run("sc config WiaRpc start= disabled") : If DebugLog Then Log("Disable Service Still Image Acquisition Events")
+
+If WinDefend.checked			Then
+	If DebugLog Then Log("Disable Service Windows Defender")
+	Run("sc config WinDefend start= disabled")
+	WSH.RegWrite "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\DisableAntiSpyware","1","REG_DWORD"
+	On Error Resume Next
+	Run("reg delete HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run /v ""Windows Defender"" /f")
+	Run("reg delete HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run /v SecurityHealth /f")
+	Run("reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run /v WindowsDefender /t REG_BINARY /d 07000000acaaa805946bd201 /f")
+	On Error Goto 0
+End If
+
+If Wlansvc.checked			Then Run("sc config Wlansvc start= disabled") : If DebugLog Then Log("Disable Service WLAN AutoConfig")
+
+If WMPNetworkSvc.checked		Then Run("sc config WMPNetworkSvc start= disabled") : If DebugLog Then Log("Disable Service Windows media player Network Sharing")
+
+If wlidsvc.checked			Then Run("sc config wlidsvc start= disabled") : If DebugLog Then Log("Disable Service Microsoft Account Sign-In Assistent")
+
+If WPCSvc.checked			Then Run("sc config WPCSvc start= disabled") : If DebugLog Then Log("Disable Service Parental Controls")
+
+If WwanSvc.checked			Then Run("sc config WwanSvc start= disabled") : If DebugLog Then Log("Disable Service WWAN AutoConfig")
+
+If wscsvc.checked			Then Run("sc config wscsvc start= disabled") : If DebugLog Then Log("Disable Service Security Center")
+
+If WSearch.checked			Then Run("sc config WSearch start= disabled") : If DebugLog Then Log("Disable Service Windows Search")
+
+If Xbox.checked				Then
+	Run("sc config XblAuthManager start= disabled") : If DebugLog Then Log("Disable Service Xbox Live Auth Manager")
+	Run("sc config XblGameSave start= disabled") : If DebugLog Then Log("Disable Service Xbox Live game Save")
+	Run("sc config XboxNetApiSvc start= disabled") : If DebugLog Then Log("Disable Service Xbox Live Networking Service")
+End If
+
+'+---------------------------------------------------------------------------------+
+'| Special Commands (row 7)                                                        |
+'+---------------------------------------------------------------------------------+
+Log("Special Commands (row 7)")
+
+If Chimney.checked		Then Run("netsh int tcp set global chimney=disable") : If DebugLog Then Log("Disable TCP Chimney")
+
+If AutoTuning.checked		Then Run("netsh int tcp set global autotuninglevvel=normal") : If DebugLog Then Log("TCP Autotuning Level to normal (https://blogs.technet.microsoft.com/networking/2016/08/11/an-update-on-windows-tcp-autotuninglevel)")
+
+If ECN.checked			Then Run("netsh int tcp set global ecncapability=disabled") : If DebugLog Then Log("Disable TCP ECNCapability")
+
+If RSC.checked			Then Run("netsh int tcp set global rsc=disabled") : If DebugLog Then Log("Disable TCP Receive Segment Coalescing State (RSC)")
+
+If RSS.checked			Then Run("netsh int tcp set global rss=disabled") : If DebugLog Then Log("Disable TCP Receive Side Scaling (RSS)")
+
+If TimeStamps.checked		Then Run("netsh int tcp set global timestamps=disabled") : If DebugLog Then Log("Disable TCP Timestamps")
+
+If Congestion.checked		Then Run("netsh int tcp set supplemental custom congestionprovider=none") : If DebugLog Then Log("Disable TCP Congestion Provider")
+
+If TaskOffLoad.checked		Then Run("netsh int ip set global taskoffload=disabled") : If DebugLog Then Log("Disable IP TaskOffload")
+
+If BootAnimation.checked	Then
+	If DebugLog Then Log("Disable the boot animation")
+	Run("bcdedit /set BOOTUX disabled")
+	Run("bcdedit /set {default} bootlog no")
+	Run("bcdedit /set {default} quietboot on")
+End If
+
+If StartupRepair.checked	Then
+	If DebugLog Then Log("Disable Startup Repair option")
+	Run("bcdedit /set {default} bootstatuspolicy ignoreallfailures")
+	Run("bcdedit /set {default} recoveryenabled No")
+End If
+
+If DEP.checked			Then Run("bcdedit /set {current} nx AlwaysOff") : If DebugLog Then Log("Disable DEP")
+
+If Power.checked		Then
+	If DebugLog Then Log("Disable hiberation and set power scheme to maximum")
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power\HibernateEnabled","0","REG_DWORD"
+	Run("powercfg -H OFF")
+	Run("powercfg -setactive SCHEME_MIN")
+	Run("powercfg /SETACVALUEINDEX 381b4222-f694-41f0-9685-ff5bb260df2e 0012ee47-9041-4b5d-9b77-535fba8b1442 6738e2c4-e8a5-4a42-b16a-e040e769756e 0")
+	Run("powercfg /SETDCVALUEINDEX 381b4222-f694-41f0-9685-ff5bb260df2e 0012ee47-9041-4b5d-9b77-535fba8b1442 6738e2c4-e8a5-4a42-b16a-e040e769756e 0")
+	Run("powercfg -change -disk-timeout-ac 0")
+	Run("powercfg -change -disk-timeout-dc 0")
+	Run("powercfg -change -monitor-timeout-ac 0")
+	Run("powercfg -change -monitor-timeout-dc 0")
+End If
+
+If NTFSLastTimeStamp.checked	Then
+	If DebugLog Then Log("Disable NTFS last access timestamp")
+	Run("fsutil behavior set DisableLastAccess 1")
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\NtfsDisableLastAccessUpdate","1","REG_DWORD"
+End If
+
+If SchedTask.checked		Then
+	If DebugLog Then Log("Disable some Scheduled Tasks")
+	WSH.Run "cmd /c del /s %temp%\temptask.*",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows Defender\MP Scheduled Scan"" /disable > %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows Defender\MPIdleTask"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Active Directory Rights Management Services Client\AD RMS Rights Policy Template Management (Automated)"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Active Directory Rights Management Services Client\AD RMS Rights Policy Template Management (Manual)"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\AppID\EDP Policy Manager"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\AppID\PolicyConverter"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\AppID\SmartScreenSpecific"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\AppID\VerifiedPublisherCertStoreCheck"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Application Experience\AitAgent"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Application Experience\ProgramDataUpdater"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Application Experience\StartupAppTask"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\ApplicationData\appuriverifierdaily"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\ApplicationData\appuriverifierinstall"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\ApplicationData\CleanupTemporaryState"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\ApplicationData\DsSvcCleanup"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Autochk\Proxy"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Bluetooth\UninstallDeviceTask"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Chkdsk\ProactiveScan"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\CloudExperienceHost\CreateObjectTask"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Customer Experience Improvement Program\BthSQM"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Customer Experience Improvement Program\Consolidator"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Customer Experience Improvement Program\KernelCeipTask"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Customer Experience Improvement Program\Server\ServerCeipAssistant"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Customer Experience Improvement Program\Server\ServerRoleCollector"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Customer Experience Improvement Program\Server\ServerRoleUsageCollector"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Customer Experience Improvement Program\Uploader"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Customer Experience Improvement Program\UsbCeip"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Defrag\ScheduledDefrag"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Diagnosis\Scheduled"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticResolver"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Feedback\Siuf\DmClient"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\FileHistory\File History (maintenance mode)"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Location\Notifications"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Location\WindowsActionDialog"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Maintenance\WinSAT"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Maps\MapsToastTask"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Maps\MapsUpdateTask"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\MemoryDiagnostic\ProcessMemoryDiagnosticEvents"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\MemoryDiagnostic\RunFullMemoryDiagnostic"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\MobilePC\HotStart"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Mobile Broadband Accounts\MNO Metadata Parser"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Offline Files\Background Synchronization"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Offline Files\Logon Synchronization"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Power Efficiency Diagnostics\AnalyzeSystem"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\RAC\RacTask"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Ras\MobilityManager"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\RecoveryEnvironment\VerifyWinRE"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Registry\RegIdleBackup"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\RetailDemo\CleanupOfflineContent"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Server Manager\CleanupOldPerfLogs"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Server Manager\ServerManager"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Servicing\StartComponentCleanup"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Shell\FamilySafetyMonitor"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Shell\FamilySafetyRefresh"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Shell\IndexerAutomaticMaintenance"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\SideShow\AutoWake"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\SideShow\GadgetManager"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\SideShow\SessionAgent"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\SideShow\SystemDataProviders"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\SystemRestore\SR"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\TaskScheduler\Maintenance Configurator"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\TaskScheduler\Manual Maintenance"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\TaskScheduler\Regular Maintenance"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\TPM\Tpm-Maintenance"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\UPnP\UPnPHostConfig"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\WDI\ResolutionHost"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Windows Defender\Windows Defender Cache Maintenance"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Windows Defender\Windows Defender Cleanup"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Windows Defender\Windows Defender Scheduled Scan"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Windows Defender\Windows Defender Verification"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Windows Error Reporting\QueueReporting"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Windows Filtering Platform\BfeOnServiceStartTypeChange"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Windows Media Sharing\UpdateLibrary"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\WindowsBackup\ConfigNotification"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\WindowsUpdate\Automatic App Update"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\WindowsUpdate\Scheduled Start"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\WindowsUpdate\sih"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\WindowsUpdate\sihboot"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\WOF\WIM-Hash-Management"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\WOF\WIM-Hash-Validation"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\Windows\Workplace Join\Recovery-Check"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\XblGameSave\XblGameSaveTask"" /disable >> %temp%\temptask.bat",0,true
+	WSH.Run "cmd /c echo schtasks /change /TN ""\Microsoft\XblGameSave\XblGameSaveTaskLogon"" /disable >> %temp%\temptask.bat",0,true
+	'WSH.Run "cmd /c echo pause >> %temp%\temptask.bat",0,true	'tbv debugging
+	WSH.Run "schtasks /create /RU SYSTEM /SC once /ST 00:00 /TN temptask /TR ""%temp%\temptask.bat > %temp%\temptask.log"" /F",0,true
+	WSH.Run "schtasks /run /TN temptask",0,true
+	WSH.Run "schtasks /delete /TN temptask /F",0,true
+	WSH.Run "cmd /c del /s %temp%\temptask.bat",0,true	'tbv debugging
+	WSH.Run "cmd /c del /s %temp%\temptask.log",0,true	'tbv debugging
+	WSH.RegWrite "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance\MaintenanceDisabled","1","REG_DWORD"
+End If
+
+If DelSysRestore.checked	Then Run("vssadmin delete shadows /All /Quiet") : If DebugLog Then Log("Delete Restore Points for System Restore")
+
+If SymbolPath.checked		Then Run("setx _NT_SYMBOL_PATH ""srv*c:\symbols*http://msdl.microsoft.com/download/symbols"" /M") : If DebugLog Then Log("Set Symbol path")
+
+If RecoveryDump.checked		Then Run("wmic recoveros set DebugInfoType = 3") : If DebugLog Then Log("Set Recovery Dump to Small")
+
+If IsServer AND Winver >= "6.2" Then
+	If FSCPU.checked		Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Quota System\EnableCpuQuota","0","REG_DWORD" : If DebugLog Then Log("Fair Share for CPU")
+	If FSDisk.checked		Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\TSFairShare\Disk\EnableFairShare","0","REG_DWORD" : If DebugLog Then Log("Fair Share for Disk")
+	If FSNet.checked		Then WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Services\TSFairShare\NetFS\EnableFairShare","0","REG_DWORD" : If DebugLog Then Log("Fair Share for Network")
+End If
+
+On error Resume Next
+If DebugLog Then Log("Clean ActiveSetup - Themes")
+WSH.RegDelete "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{2C7339CF-2B09-4501-B3F3-F3508C9228ED}\StubPath"
+
+If DebugLog Then Log("Clean ActiveSetup - Clear Icon Cache")
+WSH.RegDelete "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{2D46B6DC-2207-486B-B523-A557E6D54B47}\StubPath"
+
+If DebugLog Then Log("Clean ActiveSetup - MailNews")
+WSH.RegDelete "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{44BBA840-CC51-11CF-AAFA-00AA00B6015C}\StubPath"
+
+If DebugLog Then Log("Clean ActiveSetup - Enable TLS1.1 and 1.2")
+WSH.RegDelete "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{66C64F22-FC60-4E6C-A6B5-F0D580E680CE}\StubPath"
+
+If DebugLog Then Log("Clean ActiveSetup - Microsoft Windows Media Player")
+WSH.RegDelete "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{6BF52A52-394A-11d3-B153-00C04F79FAA6}\StubPath"
+
+If DebugLog Then Log("Clean ActiveSetup - Disable SSL3")
+WSH.RegDelete "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{7D715857-A67C-4C2F-A929-038448584D63}\StubPath"
+
+If DebugLog Then Log("Clean ActiveSetup - Windows Desktop Update")
+WSH.RegDelete "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{89820200-ECBD-11cf-8B85-00AA005B4340}\StubPath"
+
+If DebugLog Then Log("Clean ActiveSetup - Web Platform Customizations")
+WSH.RegDelete "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{89820200-ECBD-11cf-8B85-00AA005B4383}\StubPath"
+
+If DebugLog Then Log("Clean ActiveSetup - DOTNETFRAMEWORKS")
+WSH.RegDelete "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{89B4C1CD-B018-4511-B0A1-5476DBF70820}\StubPath"
+
+If DebugLog Then Log("Clean ActiveSetup - Google Chrome")
+WSH.RegDelete "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{8A69D345-D564-463c-AFF1-A69D9E530F96}\StubPath"
+
+If DebugLog Then Log("Clean ActiveSetup - Applying Enhanced Security Configuration Admin")
+WSH.RegDelete "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{A509B1A7-37EF-4b3f-8CFC-4F3A74704073}\StubPath"
+
+If DebugLog Then Log("Clean ActiveSetup - Applying Enhanced Security Configuration User")
+WSH.RegDelete "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\{A509B1A8-37EF-4b3f-8CFC-4F3A74704073}\StubPath"
+
+If DebugLog Then Log("Clean ActiveSetup - Microsoft Windows Media Player")
+WSH.RegDelete "HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\>{22d6f312-b0f6-11d0-94ab-0080c74c7e95}\StubPath"
+On Error Goto 0
+
+If ComponentCleanup.checked	Then
+	If DebugLog Then Log("Windows Component Cleanup")
+	If Winver = 6.2 Then Run("dism /online /Cleanup-Image /StartComponentCleanup")
+	If Winver >= 6.3 Then Run("dism /online /Cleanup-Image /StartComponentCleanup /ResetBase")
+	Do While IsProcessRunning("dism.exe")
+		WSH.Run "cmd /c ping 127.0.0.1",0,true
+	Loop
+End If
+
+If DebugLog Then Log("Fix Windows Management Instrumentation Service")
+Run("winmgmt /standalonehost")
+Run("sc config winmgmt group= COM Infrastructure")
+
+'+---------------------------------------------------------------------------------+
+'| Optimize special for PVS                                                        |
+'+---------------------------------------------------------------------------------+
+If FSO.FileExists(ProgFiles & "\Citrix\Provisioning Services\ImagingWizard.exe") Then
+	Log("PVS")
+	Run("reg add HKLM\SOFTWARE\Citrix\ProvisioningServices /v DeviceOptimizerRun /d 1 /t REG_DWORD /f")
+	Run("reg add HKLM\SOFTWARE\Citrix\ProvisioningServices /v StatusTray /d 0 /t REG_DWORD /f")
+	Run("reg add HKLM\SYSTEM\CurrentControlSet\Services\BNIStack\Parameters /v EnableDedicatedDumpFile /d 0 /t REG_DWORD /f")
+End If
+
+'+---------------------------------------------------------------------------------+
+'| Optimize special for VMware                                                     |
+'+---------------------------------------------------------------------------------+
+If Hypervisor = "VMware" Then
+	Log("VMware")
+	Run("reg delete HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run /v ""VMware User Process"" /f")
+	Run("sc config vmdebug start= disabled")
+	Run("reg add ""HKLM\SOFTWARE\VMware, Inc.\VMware Tools"" /v ShowTray /d 0 /t REG_DWORD /f")
+End If
+
+'+---------------------------------------------------------------------------------+
+'| Optimize NIC                                                                    |
+'+---------------------------------------------------------------------------------+
+If DebugLog Then Log("NIC")
+strKey = "SYSTEM\CurrentControlSet\Control\Class\{4D36E972-E325-11CE-BFC1-08002BE10318}"
+oReg.EnumKey HKLM, strKey, arrSubKeys
+For Each strSubKey in arrSubKeys
+	strSKey = strKey & "\" & strSubKey
+	oReg.GetStringValue HKLM, strSKey, "DriverDesc", strDevice
+	If strDevice = "vmxnet3 Ethernet Adapter" OR strDevice = "Microsoft Hyper-V Network Adapter" Then
+		oReg.SetStringValue HKLM, strSKey, "*IPChecksumOffloadIPv4",0
+		oReg.SetStringValue HKLM, strSKey, "*LsoV2IPv4",0
+		oReg.SetStringValue HKLM, strSKey, "*LsoV2IPv6",0
+		oReg.SetStringValue HKLM, strSKey, "*RscIPv4",0
+		oReg.SetStringValue HKLM, strSKey, "*RscIPv6",0
+		oReg.SetStringValue HKLM, strSKey, "*TCPChecksumOffloadIPv4",0
+		oReg.SetStringValue HKLM, strSKey, "*TCPChecksumOffloadIPv6",0
+		oReg.SetStringValue HKLM, strSKey, "*UDPChecksumOffloadIPv4",0
+		oReg.SetStringValue HKLM, strSKey, "*UDPChecksumOffloadIPv6",0
+	End If
+	If strDevice = "vmxnet3 Ethernet Adapter" Then
+		oReg.SetStringValue HKLM, strSKey, "*LsoV1IPv4",0
+		oReg.SetStringValue HKLM, strSKey, "OffloadIpOptions",0
+		oReg.SetStringValue HKLM, strSKey, "OffloadTcpOptions",0
+		oReg.SetStringValue HKLM, strSKey, "OffloadVlanEncap",0
+		oReg.SetDWORDValue HKLM, strSKey, "PnPCapabilities", 280
+	End If
+Next
+
+'+---------------------------------------------------------------------------------+
+'| Disk Cleanup                                                                    |
+'+---------------------------------------------------------------------------------+
+If DiskCleanup.checked Then
+	If DebugLog Then Log("Disk Cleanup")
+	VC = "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches"
+	Run("reg add """ & VC & "\Active Setup Temp Folders"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\BranchCache"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Content Indexer Cleaner"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\D3D Shader Cache"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Delivery Optimization Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Device Driver Packages"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Diagnostic Data Viewer database files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Downloaded Program Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\DownloadsFolder"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Feedback Hub Archive log files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\GameNewsFiles"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\GameStatisticsFiles"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\GameUpdateFiles"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Internet Cache Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Language Pack"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Memory Dump Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Offline Pages Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Old ChkDsk Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Previous Installations"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Recycle Bin"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\RetailDemo Offline Content"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Service Pack Cleanup"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Setup Log Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\System error memory dump files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\System error minidump files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Temporary Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Temporary Setup Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Temporary Sync Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Thumbnail Cache"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Update Cleanup"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Upgrade Discarded Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\User file versions"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Windows Defender"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Windows Error Reporting Archive Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Windows Error Reporting Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Windows Error Reporting Queue Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Windows Error Reporting System Archive Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Windows Error Reporting System Queue Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Windows Error Reporting Temp Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Windows ESD installation files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	Run("reg add """ & VC & "\Windows Upgrade Log Files"" /v StateFlags0100 /d 2 /t REG_DWORD /f")
+	WSH.Run "cleanmgr.exe /sagerun:100",1,false
+	For x = 0 to 89
+		If IsProcessRunning("cleanmgr.exe") Then
+			WSH.Popup "Waiting for disk cleanup to finish, already waiting " & x & "/90 minutes",5,"Disk Cleanup",VBInformation
+		Else
+			Exit For
+		End If	
+	Next
+End If
+
+'+---------------------------------------------------------------------------------+
+'| Close                                                                           |
+'+---------------------------------------------------------------------------------+
+Log("Finished")
+window.close
+End Sub
+
+'+---------------------------------------------------------------------------------+
+'| Functions                                                                       |
+'+---------------------------------------------------------------------------------+
+Sub Log(Logtext)
+	WSH.Run "cmd /c Echo %date% %time% VDI Optimizer " & HTA.Version & " - " & Logtext & " >> %systemroot%\AppInstall.txt",0,True
+End Sub
+
+Sub Run(Command)
+	On Error Resume Next
+	GetObject("winmgmts:\\.\root\cimv2:Win32_Process").Create Command
+	On Error Goto 0
+End Sub
+
+Sub CountDown
+	If checkStart.checked Then
+		If intSeconds = 0 Then
+			If intMinutes = 0 Then
+				window.ClearInterval(idTimer)
+				Log("Time up, start Optimization")
+				Optimize
+			Else
+				intMinutes = intMinutes - 1
+			End If
+			intSeconds = 59
+		Else
+			intSeconds = intSeconds - 1
+		End If
+		clock.innerHTML = intMinutes & ":" & Right("00" & intSeconds, 2)
+	Else
+		window.ClearInterval(idTimer)
+	End If
+End Sub
+
+Function IsProcessRunning(strProcess)
+	IsProcessRunning = False
+	On Error Resume Next
+	Set objWMIService = GetObject("winmgmts:\\.\root\cimv2")
+	Set colItems = objWMIService.ExecQuery("Select * from Win32_Process")
+	For Each Process In colItems
+		If UCase(Process.Name) = UCase(strProcess) Then 
+			IsProcessRunning = True
+			Exit Function
+		End If 
+	Next
+	On Error Goto 0
+End Function
+'+---------------------------------------------------------------------------------+
+</script>
+
+<style type="text/css">
+Body {font-family:Tahoma;font-weight:Bold;font-size:10pt}
+Versie {font-family:Tahoma;font-size:8pt}
+TableH {font-family:Tahoma;font-weight:Bold;font-size:10pt}
+Table {font-family:Tahoma;font-size:10pt}
+</style>
+<body>
+<center>
+<h3><span ID="AppName"></span>&nbsp;<span ID="AppVer"></span></h3>
+<h6><span ID="OSCaption"></span></h6>
+<input type="checkbox" name="checkStart" OnClick="CountDown" onChange="CountDown" CHECKED>Optimize automatically in <span id="clock">&nbsp;</span> or click <input type="button" Value="Optimize" OnClick="Optimize"><br>
+<input type="Button" Value="CheckAll" OnClick="Check(True)"><input type="Button" value="UNCheckAll" OnClick="Check(False)"><br>
+</center>
+<table border="1"><tr><td>
+<b><!--R01-->Default User Settings																		</b></td><td><b><!--R02-->Default System Settings							</b></td><td><b><!--R03-->Default System Settings								</b></td><td><b><!--R04-->Disable Services							</b></td><td><b><!--R05-->Disable Services								</b></td><td><b><!--R06-->Disable Services									</b></td><td><b><!--R07-->Specials</b>
+<!--01--></td></tr><tr><td><input type="checkbox" name="Default_Screensaver" CHECKED>Default Screensaver									</td><td><input type="checkbox" name="SkipRearm" CHECKED>Allow Windows Rearm over 3 times		</td><td><input type="checkbox" name="UACSecurePrompt" CHECKED>Disable UAC secure desktop prompt		</td><td><input type="checkbox" name="AxInstSV" CHECKED>ActiveX Installer			</td><td><input type="checkbox" name="iphlpsvc" CHECKED>IP Helper					</td><td><input type="checkbox" name="TrkWks" CHECKED>Distributed Link Tracking Client				</td><td><input type="checkbox" name="Chimney" CHECKED>Disable TCP Chimney
+<!--02--></td></tr><tr><td><input type="checkbox" name="Secure_Screensaver" CHECKED>Secure Screensaver										</td><td><input type="checkbox" name="IEFirstRun" CHECKED>Disable IE Wizard				</td><td><input type="checkbox" name="WindowsSideShow" CHECKED>Disable Windows Sideshow				</td><td><input type="checkbox" name="AJRouter" CHECKED>AllJoyn Router Service			</td><td><input type="checkbox" name="lfsvc" CHECKED>Geolocation Service				</td><td><input type="checkbox" name="UI0Detect" CHECKED>Interactive Services Detection				</td><td><input type="checkbox" name="AutoTuning" CHECKED>TCP Autotuning Level to normal
+<!--03--></td></tr><tr><td><input type="checkbox" name="Screensaver_Timeout" CHECKED>Screensaver Timeout <input type="text" ID="ScreensaverTimeOut" size="2" Value="600">(sec)	</td><td><input type="checkbox" name="IECache" CHECKED>Reduce IE Temporary File Cache			</td><td><input type="checkbox" name="PCPWChange" CHECKED>Prevent Computer password change			</td><td><input type="checkbox" name="AeLookupSvc" CHECKED>Application Experience		</td><td><input type="checkbox" name="MapsBroker" CHECKED>Download Maps Manager				</td><td><input type="checkbox" name="upnphost" CHECKED>Universal PnP Host					</td><td><input type="checkbox" name="ECN" CHECKED>Disable TCP ECNCapability
+<!--04--></td></tr><tr><td><input type="checkbox" name="LogonScreenSaver" CHECKED>Disable Screensaver before logon								</td><td><input type="checkbox" name="RDP" CHECKED>Enable RDP						</td><td><input type="checkbox" name="ServiceStartTimeout" CHECKED>Increase Service Startup Timeout		</td><td><input type="checkbox" name="ALG" CHECKED>Application Layer Gateway			</td><td><input type="checkbox" name="Mcx2Svc" CHECKED>Media Center Extender Service			</td><td><input type="checkbox" name="vmickvpexchange" CHECKED>Hyper-V Data Exchange				</td><td><input type="checkbox" name="RSC" CHECKED>Disable TCP Receive Segment Coalescing State (RSC)
+<!--05--></td></tr><tr><td><input type="checkbox" name="Default_WallPaper" CHECKED>Default WallPaper										</td><td><input type="checkbox" name="AU" CHECKED>Disable Automatic Update				</td><td><input type="checkbox" name="ErrorMode" CHECKED>Hide Hard Error Messages				</td><td><input type="checkbox" name="AppMgmt" CHECKED>Application Management			</td><td><input type="checkbox" name="MSiSCSI" CHECKED>Microsoft iSCSI Initiator Service		</td><td><input type="checkbox" name="vmicguestinterface" CHECKED>Hyper-V Guest Service Interface		</td><td><input type="checkbox" name="RSS">Disable TCP Receive Side Scaling (RSS)
+<!--06--></td></tr><tr><td><input type="checkbox" name="IECache_Non_Persistent" CHECKED>IECache Non Persistent									</td><td><input type="checkbox" name="SR" CHECKED>Disable System Restore				</td><td><input type="checkbox" name="Backupmon" CHECKED>Disable Backup Monitoring				</td><td><input type="checkbox" name="AppReadiness" CHECKED>App Readiness			</td><td><input type="checkbox" name="NcbService" CHECKED>Network Connection Broker			</td><td><input type="checkbox" name="vmicshutdown" CHECKED>Hyper-V Guest Shutdown Service			</td><td><input type="checkbox" name="TimeStamps" CHECKED>Disable TCP Timestamps
+<!--07--></td></tr><tr><td><input type="checkbox" name="Disable_RSS_Feeds" CHECKED>Disable RSS Feeds										</td><td><input type="checkbox" name="DiskTimeOut" CHECKED>Disk Timeout					</td><td><input type="checkbox" name="CIFSOptimize" CHECKED>CIFS/SMB optimizations				</td><td><input type="checkbox" name="BDESVC" CHECKED>Bitlocker Drive Encryption		</td><td><input type="checkbox" name="netprofm">Network List						</td><td><input type="checkbox" name="vmicheartbeat" CHECKED>Hyper-V Heartbeat					</td><td><input type="checkbox" name="Congestion" CHECKED>Disable TCP Congestion Provider
+<!--08--></td></tr><tr><td><input type="checkbox" name="IE_OffScreen_Composisiton" CHECKED>IE OffScreen Composition								</td><td><input type="checkbox" name="SuperFetch" CHECKED>Set Superfetch to boot files only		</td><td><input type="checkbox" name="DelayedDesktopTimeout" CHECKED>Delayed Desktop Switch Timeout		</td><td><input type="checkbox" name="Beep">Windows Sounds					</td><td><input type="checkbox" name="NetTcpPortSharing" CHECKED>Net.Tcp Port Sharing			</td><td><input type="checkbox" name="vmicvmsession" CHECKED>Hyper-V PowerShell Direct				</td><td><input type="checkbox" name="TaskOffLoad" CHECKED>Disable IP TaskOffload
+<!--09--></td></tr><tr><td><input type="checkbox" name="Visual" CHECKED>Visual Effects												</td><td><input type="checkbox" name="RecycleBin" CHECKED>Disable Storing Recycle Bin Files		</td><td><input type="checkbox" name="BugCheckMemDump" CHECKED>Disable Bug Check Memory Dump			</td><td><input type="checkbox" name="BFE">Base Filtering Engine				</td><td><input type="checkbox" name="PcaSvc" CHECKED>Program Compatability Assistant			</td><td><input type="checkbox" name="vmicrdv" CHECKED>Hyper-V Remote Desktop Virtualization			</td><td><input type="checkbox" name="BootAnimation" CHECKED>Disable the boot animation
+<!--10--></td></tr><tr><td><input type="checkbox" name="Sounds" CHECKED>Disable Logon/Logoff Sounds										</td><td><input type="checkbox" name="Offload" CHECKED>Large Send Offload				</td><td><input type="checkbox" name="Eventlog" CHECKED>Limit Eventlog Size					</td><td><input type="checkbox" name="BITS" CHECKED>BITS					</td><td><input type="checkbox" name="PeerDistSvc" CHECKED>BrachCache					</td><td><input type="checkbox" name="vmictimesync" CHECKED>Hyper-V Time Synchronization			</td><td><input type="checkbox" name="StartupRepair" CHECKED>Disable Startup Repair option
+<!--11--></td></tr><tr><td><input type="checkbox" name="Desktop_UserProfile" CHECKED>Show UserProfile Folder									</td><td><input type="checkbox" name="IPv6" CHECKED>DisableIPv6						</td><td><input type="checkbox" name="Workstation" CHECKED>Optimize Workstation Service				</td><td><input type="checkbox" name="Browser" CHECKED>Computer Browser				</td><td><input type="checkbox" name="QWAVE" CHECKED>Quality Windows Audio Video Experience		</td><td><input type="checkbox" name="vmicvss" CHECKED>Hyper-V Volume Shadow Copy Requestor			</td><td><input type="checkbox" name="DEP" CHECKED>Disable DEP
+<!--12--></td></tr><tr><td><input type="checkbox" name="Desktop_Computer" CHECKED>Show Computer											</td><td><input type="checkbox" name="ClearPageFile" CHECKED>Disable Pagefile Clear at Shutdown		</td><td><input type="checkbox" name="Server" CHECKED>Optimize Server Service					</td><td><input type="checkbox" name="BTAGService" CHECKED>Bluetooth Audio Service		</td><td><input type="checkbox" name="RemoteAccess" CHECKED>Routing and remote Access			</td><td><input type="checkbox" name="VSS" CHECKED>Volume Shadow Copy						</td><td><input type="checkbox" name="Power" CHECKED>Various Power Optimizations
+<!--13--></td></tr><tr><td><input type="checkbox" name="Desktop_Network">Show Network												</td><td><input type="checkbox" name="OfflineFiles" CHECKED>Disable Offline Files			</td><td><input type="checkbox" name="IPv4" CHECKED>Optimize IPv4						</td><td><input type="checkbox" name="bthserv" CHECKED>Bluetooth Support			</td><td><input type="checkbox" name="RetailDemo" CHECKED>Retail Demo					</td><td><input type="checkbox" name="wbengine" CHECKED>Block Level Backup Engine				</td><td><input type="checkbox" name="NTFSLastTimeStamp" CHECKED>Disable NTFS last access timestamp
+<!--14--></td></tr><tr><td><input type="checkbox" name="Desktop_ControlPanel">Show Control Panel										</td><td><input type="checkbox" name="BackgroundDefrag" CHECKED>Disable Background Defragmentation	</td><td><input type="checkbox" name="IESC" CHECKED>Disable Internet Explorer Enhanced Security			</td><td><input type="checkbox" name="cisvc" CHECKED>Indexing Service				</td><td><input type="checkbox" name="ScDeviceEnum" CHECKED>Smart Card Device Enumeration Service	</td><td><input type="checkbox" name="WbioSrvc" CHECKED>Windows Biometric Service				</td><td><input type="checkbox" name="SchedTask" CHECKED>Disable various Scheduled Tasks
+<!--15--></td></tr><tr><td><input type="checkbox" name="Desktop_RecycleBin">Show Recycle Bin											</td><td><input type="checkbox" name="BackgroundLS" CHECKED>Disable Background Layout Service		</td><td><input type="checkbox" name="PagingExecutive" CHECKED>Paging of the Executive				</td><td><input type="checkbox" name="Defragsvc" CHECKED>Disk Defragmenter			</td><td><input type="checkbox" name="SDRSVC" CHECKED>Windows Backup					</td><td><input type="checkbox" name="wcncsvc" CHECKED>Windows Connect Now					</td><td><input type="checkbox" name="DelSysRestore" CHECKED>Delete Restore Points for System Restore
+<!--16--></td></tr><tr><td><input type="checkbox" name="ActionCenter" CHECKED>Disable Action Center										</td><td><input type="checkbox" name="SpoolerWarningEvents" CHECKED>Spooler Warning Events		</td><td><input type="checkbox" name="GPODebug" CHECKED>Enable GPO Debug Logging				</td><td><input type="checkbox" name="DeviceAssociationService">Device Association		</td><td><input type="checkbox" name="SEMgrSvc" CHECKED>Payments and NFC/SE Manager			</td><td><input type="checkbox" name="WcsPlugInService" CHECKED>Windows Color System				</td><td><input type="checkbox" name="SymbolPath" CHECKED>Set Symbol path
+<!--17--></td></tr><tr><td><input type="checkbox" name="ThisPC" CHECKED>Change explorer default view to This PC instead of Quick Access						</td><td><input type="checkbox" name="NewNetwork" CHECKED>Disable New Network dialog			</td><td><input type="checkbox" name="NoLockScreen" CHECKED>Disable Lock Screen					</td><td><input type="checkbox" name="DiagTrack" CHECKED>Diagnostics Tracking Service		</td><td><input type="checkbox" name="SensorServices" CHECKED>Sensor Services				</td><td><input type="checkbox" name="wercplsupport" CHECKED>Problem Reports and Solutions Control Panel Support</td><td><input type="checkbox" name="RecoveryDump" CHECKED>Set Recovery Dump to Small
+<!--18--></td></tr><tr><td><input type="checkbox" name="Autoplay" CHECKED>Disable Autoplay for all devices									</td><td><input type="checkbox" name="NewDriversFromWU" CHECKED>Disable AutoUpdate of drivers from WU	</td><td><input type="checkbox" name="NotificationCenter" CHECKED>Disable Notification Center			</td><td><input type="checkbox" name="DPS" CHECKED>Diagnostic Policy Service			</td><td><input type="checkbox" name="SharedAccess" CHECKED>Internet Connection Sharing			</td><td><input type="checkbox" name="WerSvc" CHECKED>Windows Error Reporting					</td><td><input type="checkbox" name="FSCPU" CHECKED>Disable Fair share CPU
+<!--19--></td></tr><tr><td><input type="checkbox" name="StartMost" CHECKED>Disable show most used apps at start menu								</td><td><input type="checkbox" name="OptimizeCPU" CHECKED>Optimize CPU for Applications		</td><td><input type="checkbox" name="PreviousVersions">Disable Previous Versions Tab in Explorer		</td><td><input type="checkbox" name="DsmSvc" CHECKED>Device Setup Manager			</td><td><input type="checkbox" name="ShellHWDetection" CHECKED>Shell Hardware Detection		</td><td><input type="checkbox" name="WebClient">WebClient							</td><td><input type="checkbox" name="FSDisk" CHECKED>Disable Fair share Disk
+<!--20--></td></tr><tr><td><input type="checkbox" name="StartRecent" CHECKED>Disable show recent items at start menu								</td><td><input type="checkbox" name="BackgroundImage" CHECKED>Disable Logon Background Image		</td><td><input type="checkbox" name="SyncSettings" CHECKED>Disable Sync Settings to the Cloud			</td><td><input type="checkbox" name="ehRecvr" CHECKED>Windows Media Center Receiver		</td><td><input type="checkbox" name="shpamsvc" CHECKED>Shared PC Account Manager			</td><td><input type="checkbox" name="WiaRpc" CHECKED>Still Image Acquisition Events				</td><td><input type="checkbox" name="FSNet" CHECKED>Disable Fair share Network
+<!--21--></td></tr><tr><td><input type="checkbox" name="Bing" CHECKED>Disable Bing Search											</td><td><input type="checkbox" name="CEIP" CHECKED>Disable Customer Experience Improvement Program	</td><td><input type="checkbox" name="SyncFiles" CHECKED>Disable Sync Files to the Cloud			</td><td><input type="checkbox" name="ehSched" CHECKED>Windows Media Center Scheduler		</td><td><input type="checkbox" name="SNMPTRAP" CHECKED>SNMP trap					</td><td><input type="checkbox" name="WinDefend" CHECKED>Windows Defender					</td><td><input type="checkbox" name="ActiveSetup" CHECKED>Clean ActiveSetup
+<!--22--></td></tr><tr><td><input type="checkbox" name="SearchTaskbar" CHECKED>Disable Search on Taskbar									</td><td><input type="checkbox" name="Cortana">Disable Cortana						</td><td><input type="checkbox" name="SyncOneDrive" CHECKED>Disable Sync to OneDrive				</td><td><input type="checkbox" name="EFS" CHECKED>EFS						</td><td><input type="checkbox" name="SSDPSRV" CHECKED>SSDP Discovery					</td><td><input type="checkbox" name="Wlansvc" CHECKED>WLAN AutoConfig						</td><td><input type="checkbox" name="componentcleanup" CHECKED>Windows Component Cleanup
+<!--23--></td></tr><tr><td><input type="checkbox" name="Transparency" CHECKED>Disable Transparency effects									</td><td><input type="checkbox" name="LocationBasedSearch" CHECKED>Disable location based info in search</td><td><input type="checkbox" name="UploadWU" CHECKED>Disable Windows Updates Upload P2P			</td><td><input type="checkbox" name="Fax" CHECKED>Fax						</td><td><input type="checkbox" name="SstpSvc" CHECKED>Secure Socket Tunneling Protocol			</td><td><input type="checkbox" name="WMPNetworkSvc" CHECKED>Windows media player Network Sharing		</td><td><input type="checkbox" name="DiskCleanup" CHECKED>Disk Cleanup
+<!--24--></td></tr><tr><td><input type="checkbox" name="OneDrive" CHECKED>Disable OneDrive at Startup										</td><td><input type="checkbox" name="SearchWeb" CHECKED>Disable Search web				</td><td><input type="checkbox" name="Telemetry" CHECKED>Disable Telemetry Collection				</td><td><input type="checkbox" name="fdPHost" CHECKED>Function Discovery Provider Host		</td><td><input type="checkbox" name="StorSvc" CHECKED>Store Storage					</td><td><input type="checkbox" name="wlidsvc" CHECKED>Microsoft Account Sign-In Assistent			</td><td>
+<!--25--></td></tr><tr><td><input type="checkbox" name="PrivacyUser" CHECKED>Disable per user Privacy settings									</td><td><input type="checkbox" name="WindowsStore" CHECKED>Disable Windows Store			</td><td><input type="checkbox" name="NTFS83names">Disable NTFS 8.3 short name creation				</td><td><input type="checkbox" name="FDResPub" CHECKED>Function Discovery Resource Publication	</td><td><input type="checkbox" name="svsvc" CHECKED>Spot Verifier					</td><td><input type="checkbox" name="WPCSvc" CHECKED>Parental Controls						</td><td>
+<!--26--></td></tr><tr><td>																			</td><td><input type="checkbox" name="Privacy" CHECKED>Disable Privacy settings				</td><td><input type="checkbox" name="OneDriveSystem" CHECKED>OneDrive per machine (not per user)		</td><td><input type="checkbox" name="fhsvc" CHECKED>File History				</td><td><input type="checkbox" name="SysMain" CHECKED>Superfetch					</td><td><input type="checkbox" name="WwanSvc" CHECKED>WWAN AutoConfig						</td><td>
+<!--27--></td></tr><tr><td>																			</td><td><input type="checkbox" name="FirstLogonAnimation" CHECKED>Disable First Logon Animation	</td><td><input type="checkbox" name="VerboseStatus" CHECKED>Verbose vs normal status messages			</td><td><input type="checkbox" name="HomeGroupListener" CHECKED>HomeGroupListener		</td><td><input type="checkbox" name="TabletInputService" CHECKED>Tablet				</td><td><input type="checkbox" name="wscsvc" CHECKED>Security Center						</td><td>
+<!--28--></td></tr><tr><td>																			</td><td>												</td><td><input type="checkbox" name="RemoveUserFirewallRules" CHECKED>Remove User Firewall Rules at logoff	</td><td><input type="checkbox" name="HomeGroupProvider" CHECKED>HomeGroupProvider		</td><td><input type="checkbox" name="TapiSrv" CHECKED>TAPI						</td><td><input type="checkbox" name="WSearch">Windows Search							</td><td>
+<!--29--></td></tr><tr><td>																			</td><td>												</td><td>													</td><td><input type="checkbox" name="icssvc" CHECKED>Windows Mobile Hotspot			</td><td><input type="checkbox" name="Themes">Themes							</td><td><input type="checkbox" name="Xbox" CHECKED>Xbox							</td><td>
+<!--
+30</td></tr><tr><td>																			</td><td>												</td><td>												</td><td>											</td><td>												</td><td>													</td><td>
+-->
+</td></tr></table>
+</body></html>
