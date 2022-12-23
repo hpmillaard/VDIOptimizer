@@ -1,5 +1,5 @@
 <html><head><title>VDI Optimizer</title>
-<HTA:APPLICATION VERSION="2.0.17" ID="HTA" APPLICATIONNAME="VDI Optimizer" SINGLEINSTANCE="yes" BORDER="thin" BORDERSTYLE="normal" ICON="explorer.exe" CONTEXTMENU="no">
+<HTA:APPLICATION VERSION="2.0.18" ID="HTA" APPLICATIONNAME="VDI Optimizer" SINGLEINSTANCE="yes" BORDER="thin" BORDERSTYLE="normal" ICON="explorer.exe" CONTEXTMENU="no">
 </head>
 
 <script language="VBScript">
@@ -243,6 +243,7 @@ If RDP.checked				Then
 	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\fDenyTSConnections","0","REG_DWORD"
 	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp\UserAuthentication","0","REG_DWORD"
 	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp\SecurityLayer","0","REG_DWORD"
+	WSH.RegWrite "HKLM\SYSTEM\CurrentControlSet\Policies\Microsoft\FeatureManagement\Overrides\254221451","1","REG_DWORD"
 	Run("reg add ""HKLM\SOFTWARE\Microsoft\Terminal Server Client"" /v ""Min Send Interval"" /d 10 /t REG_DWORD /f")
 End If
 
